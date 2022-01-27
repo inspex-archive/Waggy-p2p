@@ -1,0 +1,14 @@
+node_modules
+.env
+.debug.env
+.openzeppelin
+#Hardhat files
+cache
+artifacts
+bin
+data
+types
+hardhat.config.js
+bsc-contract.json
+rinkeby-contract.json
+testnet-contract.json
