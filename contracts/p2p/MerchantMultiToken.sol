@@ -44,6 +44,8 @@ interface IValidator {
 interface IWBNB {
   function deposit() external payable;
 
+  function safeTransfer(address _receipt, uint256 amount) external;
+
   function withdraw(uint256 wad) external;
 }
 
@@ -114,13 +116,6 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
   IWBNB public wbnb;
   WNativeRelayer public wnativeRelayer;
 
-  mapping(address => bool) private allowToken;
-
-  modifier checkAllowToken(address _token) {
-    require(allowToken[_token], "Token is not allow");
-    _;
-  }
-
   // create merchant with token for p2p transaction
   function initialize(
     address _gov,
@@ -141,12 +136,6 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
 
   function setValidator(address _validator) external onlyOwner {
     validator = IValidator(_validator);
-  }
-
-  function setAllowTokens(address[] memory _token, bool _allow) external onlyOwner {
-    for (uint256 index = 0; index < _token.length; index++) {
-      allowToken[_token[index]] = _allow;
-    }
   }
 
   function setAdmins(address[] memory _admins) external onlyOwner {
@@ -183,7 +172,7 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     emit Deposit(msg.sender, address(wbnb), msg.value);
   }
 
-  function deposit(ERC20Upgradeable _token, uint256 _amount) public notSuspendUser checkAllowToken(address(_token)) {
+  function deposit(ERC20Upgradeable _token, uint256 _amount) public notSuspendUser {
     require(_token.allowance(msg.sender, address(this)) >= _amount, "credit not enougth");
     _token.safeTransferFrom(msg.sender, address(this), _amount);
     setShopBalance(address(_token), msg.sender, getShopBalance(msg.sender, address(_token)).add(_amount));
@@ -197,7 +186,7 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     require(ownerShopBalance > 0 && ownerShopBalance >= _amount, "balance not enougth");
     setShopBalance(address(wbnb), msg.sender, getShopBalance(msg.sender, address(wbnb)).sub(_amount));
     // transfer wbnb to wnativeRelayer
-    ERC20Upgradeable(address(wbnb)).transfer(address(wnativeRelayer), _amount);
+    wbnb.safeTransfer(address(wnativeRelayer), _amount);
     // order withdraw
     wnativeRelayer.withdraw(_amount);
     // trasfer bnb to user
@@ -206,7 +195,7 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     emit Withdraw(msg.sender, address(wbnb), _amount);
   }
 
-  function withdraw(ERC20Upgradeable _token, uint256 _amount) public notSuspendUser checkAllowToken(address(_token)) {
+  function withdraw(ERC20Upgradeable _token, uint256 _amount) public notSuspendUser {
     uint256 ownerShopBalance = shopBalance[msg.sender][address(_token)];
     require(ownerShopBalance > 0 && ownerShopBalance >= _amount, "balance not enougth");
     setShopBalance(address(_token), msg.sender, getShopBalance(msg.sender, address(_token)).sub(_amount));
@@ -225,7 +214,7 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     ERC20Upgradeable _token,
     uint256 _amount,
     address _buyer
-  ) public checkAllowToken(address(_token)) {
+  ) public {
     require(getShopBalance(msg.sender, address(_token)) >= _amount, "Balance not enougth");
     // sub avalible shop balance
     setShopBalance(address(_token), msg.sender, getShopBalance(msg.sender, address(_token)).sub(_amount));
@@ -276,18 +265,8 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     transaction.remark = _remark;
     transaction.status = TransactionStatus.CANCELED;
     // warning user to cancel because only buyer can action cancel.
+
     blackListUser.warningUser(msg.sender);
-    // unlock token to seller
-    setShopBalance(
-      address(transaction.token),
-      _seller,
-      getShopBalance(_seller, address(transaction.token)).add(transaction.amount)
-    );
-    setTotalLockBalance(
-      _seller,
-      address(transaction.token),
-      getTotalLockBalance(_seller, address(transaction.token)).sub(transaction.amount)
-    );
     emit CancelTransaction(msg.sender, address(transaction.token), transaction.amount);
   }
 
@@ -297,7 +276,7 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     _address is a receipt waller address
     _amount is value of token to transfer
     */
-  function releaseTokenBySeller(address _buyer, ERC20Upgradeable _token) public checkAllowToken(address(_token)) {
+  function releaseTokenBySeller(address _buyer, ERC20Upgradeable _token) public {
     UserInfo storage buyerInfoData = buyerInfo[msg.sender][_buyer];
     uint256 transactionLength = buyerInfoData.transactions.length;
     require(transactionLength != 0, "Not found transaction");
@@ -420,7 +399,7 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
     address _buyer,
     address _token,
     uint256 _remark
-  ) external checkAllowToken(address(_token)) {
+  ) external {
     require(msg.sender == _seller || msg.sender == _buyer, "Not allow other appeal.");
     UserInfo storage buyerInfoData = buyerInfo[_seller][_buyer];
     uint256 transactionLength = buyerInfoData.transactions.length;
@@ -460,6 +439,10 @@ contract MerchantMultiToken is OwnableUpgradeable, AccessControlUpgradeable {
 
   function getShopLockBalance(address _owner, address _buyer) internal view returns (uint256) {
     return lockTokenInfo[_owner][_buyer];
+  }
+
+  function getUserLockBalance(address _owner, address _buyer) internal view returns (uint256) {
+    return lockUserTokenInfo[_owner][_buyer];
   }
 
   function getTransactionByIndex(
